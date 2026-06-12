@@ -65,3 +65,57 @@ Ricostruzione IAT: Aprire payload_dumped.bin con PE-bear (o utilizzare Scylla) p
 Estrazione Automatica: Dare in pasto il binario riparato a FLOSS e yarGen per mappare tutte le stringhe de-offuscate (C2, percorsi di rete, chiavi di persistenza).
 
 Analisi Statica Approfondita: Caricare il binario finale in IDA Freeware 8.2. Utilizzare le stringhe estratte al punto precedente o le chiamate API sospette come Cross-References per navigare il codice e studiare le funzioni specifiche della backdoor Chrysalis (es. reverse shell, esfiltrazione dati, auto-cancellazione).
+
+
+Fase 1: Preparazione dell'Ambiente e dei File
+Obiettivo: Allestire l'ambiente di analisi isolato, eludere i controlli anti-sandbox impostando percorsi realistici e ricostruire la catena di infezione necessaria per innescare la tecnica del DLL Sideloading.
+
+🛡️ 1. Prerequisiti di Sicurezza
+Prima di manipolare i campioni malevoli, è vitale garantire che il malware non possa infettare la macchina host o comunicare con l'infrastruttura reale dell'attaccante.
+
+Isolamento di Rete: Assicurarsi che la scheda di rete della Macchina Virtuale sia fisicamente disabilitata dalle impostazioni dell'hypervisor o impostata su un rigido Host-Only (nessun bridge, nessun NAT).
+
+Visibilità Estensioni: Verificare che Esplora File di Windows sia configurato per mostrare le estensioni di tutti i file (Scheda Visualizza > spunta su Estensioni nomi file). Questo previene errori critici durante la rinominazione (es. creare un file.exe.exe).
+
+Snapshot Iniziale: Creare uno Snapshot della VM pulita prima di procedere, fungendo da punto di ripristino sicuro.
+
+📂 2. Allestimento della Directory Bersaglio
+Per ingannare i meccanismi anti-analisi del malware che verificano il percorso di esecuzione, si ricrea la directory di sistema attesa dalla backdoor:
+
+Aprire la finestra "Esegui" di Windows (Tasto Windows + R).
+
+Digitare %appdata% e premere Invio per accedere alla cartella nascosta Roaming.
+
+Creare una nuova cartella nominata esattamente Bluetooth.
+
+Percorso finale: C:\Users\[NomeUtente]\AppData\Roaming\Bluetooth\
+
+🏷️ 3. Estrazione e Ripristino della Catena
+I campioni scaricati dalle piattaforme di intelligence sono archiviati per sicurezza (password: infected), rinominati con il loro hash SHA-256 e resi inoffensivi tramite finte estensioni. È necessario ricostruire la triade originale per attivare il sideloading.
+
+Rinominare i tre file estratti seguendo questo schema esatto:
+
+L'Esca (Eseguibile Legittimo ma Vulnerabile):
+
+File originale: a511be5164dc... (Tipo: Application, ~681 KB)
+
+Azione: Rinominare in BluetoothService.exe
+
+L'Iniettore (Libreria Malevola):
+
+File originale: 3bdc4c063759... (Tipo: Application extension, ~84 KB)
+
+Azione: Rinominare in log.dll
+
+Il Payload (Dati Criptati / Shellcode):
+
+File originale: _77bfea78def...infected (Tipo: INFECTED File, ~197 KB)
+
+Azione: Eliminare l'underscore iniziale (_) e cancellare completamente l'estensione finale (.infected). Confermare l'avviso di sicurezza di Windows.
+
+Rinominare in: BluetoothService (privo di estensione).
+
+✅ 4. Assemblaggio Finale e Check-Off
+Selezionare i tre file appena ripristinati.
+
+Spostarli all'interno della cartella di sistema preparata al punto 2.
