@@ -49,11 +49,17 @@ Configurazione Debugger: Aprire x32dbg, caricare BluetoothService.exe e assicura
 
 Impostazione Breakpoint: Inserire breakpoint hardware o software sulle seguenti chiamate API cruciali:
 
-VirtualAlloc / VirtualAllocEx
+VirtualAlloc 
+
+VirtualAllocEx
 
 VirtualProtect
 
 CreateProcessInternalW (per intercettare eventuale Process Hollowing)
+
+WriteProcessMemory
+
+ResumeThread
 
 Esecuzione: Avviare l'esecuzione. Quando il debugger si ferma su VirtualAlloc/VirtualProtect, ispezionare l'indirizzo di memoria appena manipolato.
 
@@ -119,3 +125,58 @@ Rinominare in: BluetoothService (privo di estensione).
 Selezionare i tre file appena ripristinati.
 
 Spostarli all'interno della cartella di sistema preparata al punto 2.
+
+
+Fase 2: Analisi Dinamica e Bypass Anti-Debugging (In corso)
+🎯 Obiettivo della Fase
+Intercettare il processo di spacchettamento (unpacking) del payload dannoso in memoria, analizzando il comportamento della DLL infetta (log.dll) caricata tramite tecnica di DLL Sideloading dall'eseguibile esca (bluetoothservice.exe).
+
+
+📝 Diario di Analisi e Ostacoli Incontrati
+1. Primo Tentativo: Software Breakpoints sulle API Standard
+Azione: Piazzati Software Breakpoint (SetBPX) sulle principali funzioni di iniezione di Windows (VirtualAlloc, VirtualProtect, CreateProcessInternalW, ecc.) all'Entry Point del programma.
+
+Risultato: Fallimento. Il debugger ha segnalato Terminated prima di raggiungere le funzioni monitorate.
+
+Analisi Procmon: Escludendo il rumore del Registro di Sistema, l'analisi ha rivelato che l'eseguibile ha caricato correttamente log.dll ma si è poi chiuso improvvisamente. Successivamente, è emerso un rapido cambio di PID, con la comparsa di cloni del processo principale e conseguenti errori di SHARING VIOLATION.
+
+Conclusione: Il malware ha rilevato la presenza del debugger (o la modifica della RAM dovuta ai byte 0xCC dei breakpoint software) e ha eseguito una tecnica di evasione clonando se stesso in background (Bait and Switch/Process Spawning).
+
+2. Secondo Tentativo: Potenziamento ScyllaHide
+Azione: Ripristino dello snapshot della VM. Configurazione del profilo ScyllaHide su VMProtect x86/x64 aggiungendo spunte mirate:
+
+Timing Hooks: (GetTickCount, NtQueryPerf.Counter) per impedire al malware di misurare il tempo di esecuzione.
+
+DRx Protection: Per nascondere la presenza di breakpoint hardware alla CPU.
+
+Hide from PEB / System Info: Per rendere invisibile x32dbg alla lista dei processi attivi.
+
+Risultato: Fallimento. Il debugger si è arrestato nuovamente senza far scattare le trappole.
+
+3. Terzo Tentativo: Breakpoint Hardware (HWBP) sulle API Native
+Azione: Sostituzione dei Software Breakpoint (visibili nella RAM) con Hardware Breakpoint (bph), invisibili al malware in quanto salvati direttamente nei registri della CPU (limite massimo di 4 slot).
+
+Target Spostato a livello Kernel: Sono state monitorate le API non documentate (Native) di Windows per intercettare le chiamate di livello più basso:
+
+NtAllocateVirtualMemory
+
+NtWriteVirtualMemory
+
+NtResumeThread
+
+Risultato: Il debugger ha correttamente intercettato NtAllocateVirtualMemory durante le fasi iniziali di caricamento di Windows (creazione dell'Heap tramite RtlCreateHeap), ma il malware è sfuggito nuovamente creando un processo clone (es. PID 240) bypassando l'Entry Point dell'eseguibile.
+
+4. La Rivelazione Architetturale: Esecuzione in DllMain
+Azione: Analisi del flusso di caricamento.
+
+Conclusione Fondamentale: Il malware non attende l'Entry Point ufficiale (OptionalHeader.AddressOfEntryPoint) dell'eseguibile per avviare il suo codice. Sfruttando la logica di Windows, il codice malevolo viene eseguito all'interno della funzione di inizializzazione della libreria stessa (DllMain) nel millisecondo esatto in cui il sistema operativo carica log.dll in memoria.
+
+Stato Attuale: Arrivando all'Entry Point, il debugger giunge in ritardo sulla "scena del crimine", quando il processo di iniezione è già avvenuto e il malware ha già spostato l'esecuzione nel nuovo PID.
+
+Per neutralizzare questa strategia di evasione, è necessario spostare la linea di difesa prima dell'Entry Point.
+
+Attivare l'opzione User DLL Entry nelle preferenze (Events) di x32dbg.
+
+Eseguire il programma un modulo alla volta (F9 progressivo).
+
+Congelare l'esecuzione nell'istante esatto in cui il debugger notifica il caricamento del modulo log.dll, prima che venga eseguita la sua DllMain.
