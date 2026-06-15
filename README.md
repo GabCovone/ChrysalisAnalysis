@@ -164,6 +164,8 @@ NtWriteVirtualMemory
 
 NtResumeThread
 
+CreateProcessInternalW
+
 Risultato: Il debugger ha correttamente intercettato NtAllocateVirtualMemory durante le fasi iniziali di caricamento di Windows (creazione dell'Heap tramite RtlCreateHeap), ma il malware è sfuggito nuovamente creando un processo clone (es. PID 240) bypassando l'Entry Point dell'eseguibile.
 
 4. La Rivelazione Architetturale: Esecuzione in DllMain
@@ -180,3 +182,52 @@ Attivare l'opzione User DLL Entry nelle preferenze (Events) di x32dbg.
 Eseguire il programma un modulo alla volta (F9 progressivo).
 
 Congelare l'esecuzione nell'istante esatto in cui il debugger notifica il caricamento del modulo log.dll, prima che venga eseguita la sua DllMain.
+
+5. Quinto Tentativo: Congelamento in DllMain e Mascheramento Avanzato
+
+Azione: Disattivazione dei breakpoint software. Attivazione dell'opzione User DLL Entry in x32dbg per intercettare il caricamento pre-Entry Point. Utilizzo simultaneo di ScyllaHide con spunte mirate su Timing Hooks (per falsificare l'orologio di sistema e ingannare l'istruzione RDTSC) e DRx Protection (per nascondere i Breakpoint Hardware).
+
+Risultato: Fallimento "a scoppio ritardato". Il malware evade sistematicamente al secondo tentativo di esecuzione.
+
+Conclusione: Il malware implementa un controllo di persistenza o verifica lo stato ambientale/PEB (BeingDebugged). Rileva i residui della sessione precedente, rendendo necessario operare in Clean State continuo (tramite ripristino snapshot VM) ed escludendo l'uso di breakpoint temporali che alterano il normale flusso di caricamento.
+
+6. Sesto Tentativo: Intercettazione API Crittografiche Native (Il pensiero laterale)
+
+Azione: Tentativo di bypassare la logica anti-debug estraendo il payload a valle della decrittazione. 
+Ispezione della scheda Simboli di x32dbg per individuare le librerie crittografiche caricate. 
+Posizionamento di Breakpoint Hardware in Esecuzione (HWBP) sulle API native di decrittazione: CryptDecrypt (advapi32.dll) e BCryptDecrypt (bcrypt.dll).  
+Risultato: Evasione completa. 
+I breakpoint sulle API crittografiche non sono mai scattati.  
+Conclusione Fondamentale: L'autore del malware non si affida alle librerie crittografiche di Windows (CryptoAPI/CNG).
+log.dll integra un algoritmo di decrittazione custom (es. XOR, RC4) compilato staticamente nel proprio codice.  
+
+7. Settimo Tentativo: Memory Allocation Trap (La "Tela Vuota")  
+Obiettivo: Dato che il metodo di decrittazione è sconosciuto, intercettare la destinazione finale del payload decrittato.
+
+Azione:
+
+Ripristino in Clean State.
+
+Piazzamento HWBP su NtAllocateVirtualMemory (Ring 0).
+
+Utilizzo dello stepping Execute till Return (Ctrl+F9) per far completare la richiesta di memoria al sistema operativo.
+
+Analisi dello Stack: poiché l'API è nativa, l'indirizzo della memoria allocata non viene restituito in EAX (che contiene solo lo STATUS_SUCCESS), ma tramite un puntatore letto nel parametro [esp+8].
+
+Filtraggio del Rumore: L'analisi del Call Stack ha evidenziato la necessità di filtrare le normali allocazioni di sistema. Molte interruzioni iniziali su NtAllocateVirtualMemory ritornavano a ntdll.RtlCreateHeap (il sistema operativo che prepara l'Heap). La procedura richiede di ignorare queste chiamate legittime eseguendo cicli continui, fermandosi solo quando il return address nello Stack punterà direttamente a log.dll o a un modulo sconosciuto.
+
+8. Ottavo Tentativo: La Trappola su ZwProtectVirtualMemory e Scansione Progressiva
+
+Azione: Abbandonata l'allocazione di memoria a causa dell'eccessivo "rumore" di sistema. Posizionato un Hardware Breakpoint su ZwProtectVirtualMemory (usata dai packer per rendere eseguibile la memoria appena scritta). Ad ogni hit del breakpoint (F9), è stata eseguita una Ricerca Globale (Pattern Search) nella RAM per l'intestazione esadecimale PE: 4D 5A 90 00 03 00 00 00.
+
+Risultato: Successo parziale. Dopo svariati cicli, la scansione ha individuato un nuovo blocco dinamico (es. 006C0000) contenente i Magic Bytes e la dicitura This program cannot be run in DOS mode. Il blocco è stato estratto tramite "Dump Memory to File".
+
+9. Nono Tentativo: Riparazione in PE-bear e la Falsa Pista (Decoy PE)
+
+Azione: Il file binario estratto dalla RAM non veniva riconosciuto da IDA Free a causa del disallineamento della memoria (Virtual vs Raw). Il file è stato caricato in PE-bear per correggere chirurgicamente i Section Headers, sovrascrivendo i campi Raw Addr e Raw size con i valori corrispondenti alle colonne Virtual Addr e Virtual Size.
+
+Risultato: IDA ha riconosciuto l'eseguibile riparato, ma il disassemblaggio forzato (tasto 'C') e l'ispezione delle stringhe (Shift+F12) hanno svelato un inganno. La sezione .text conteneva solo 176 byte. Non c'era traccia di codice Assembly eseguibile, ma esclusivamente informazioni sui metadati (es. ProductVersion, en-US).
+
+Conclusione: Il malware ha ingannato l'analista iniettando una "DLL fantasma" o un mini-eseguibile esca per simulare un avvenuto unpacking. Il payload vero e proprio, di dimensioni nettamente superiori, è ancora celato all'interno del processo originale.
+
+Next Step (In corso): Ripristinare la Macchina Virtuale, lanciare nuovamente la trappola su ZwProtectVirtualMemory in x32dbg e analizzare la Memory Map filtrata per Dimensione (Size) per individuare grandi blocchi (es. 200+ KB) allocati dinamicamente (PRV/MAP) con permessi ERW/RW, isolando così il vero payload.
