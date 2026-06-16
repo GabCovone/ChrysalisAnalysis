@@ -231,3 +231,23 @@ Risultato: IDA ha riconosciuto l'eseguibile riparato, ma il disassemblaggio forz
 Conclusione: Il malware ha ingannato l'analista iniettando una "DLL fantasma" o un mini-eseguibile esca per simulare un avvenuto unpacking. Il payload vero e proprio, di dimensioni nettamente superiori, è ancora celato all'interno del processo originale.
 
 Next Step (In corso): Ripristinare la Macchina Virtuale, lanciare nuovamente la trappola su ZwProtectVirtualMemory in x32dbg e analizzare la Memory Map filtrata per Dimensione (Size) per individuare grandi blocchi (es. 200+ KB) allocati dinamicamente (PRV/MAP) con permessi ERW/RW, isolando così il vero payload.
+
+
+10. Decimo Tentativo: Frammentazione della Memoria (Memory Spraying) e Fallimento HWBP in Scrittura
+Azione: A seguito della scoperta del falso payload, si è tentato di monitorare in tempo reale i blocchi di memoria allocati dinamicamente (con permessi ERW) utilizzando la Memory Map di x32dbg. 
+È stato piazzato un Breakpoint Hardware in Accesso/Scrittura su un blocco candidato per intercettare l'istante esatto della decrittazione.  
+Risultato: Evasione. Il malware genera un "rumore" ambientale estremo attraverso una tecnica di Memory Spraying, allocando decine di piccoli frammenti (es. 4 KB) per disorientare l'analista. 
+Inoltre, sfrutta una decrittazione in-place, sovrascrivendo e rilasciando continuamente i buffer, non lasciando tracce contigue nella RAM.Conclusione: L'architettura di Chrysalis (attribuita all'APT Lotus Blossom) rende l'analisi dinamica in memoria strutturalmente inefficace e incline a falsi positivi.  
+
+11. Undicesimo Tentativo: Analisi Statica su log.dll e Scoperta dell'API Hashing
+Azione: Abbandono del debugging dinamico in favore dell'analisi statica della libreria iniettrice log.dll tramite IDA Freeware 8.2. 
+Ricerca delle routine di base responsabili del caricamento.  
+Risultato: Individuazione di un denso blocco matematico all'interno della sequenza di innesco, inizialmente scambiato per l'algoritmo di decrittazione (LCG). L'analisi delle costanti esadecimali (811C9DC5h e 85EBCA6Bh) ha rivelato che il malware sta in realtà implementando un sofisticato sistema combinato di hashing (FNV-1a e MurmurHash3).
+Conclusione: Il malware protegge le proprie intenzioni tramite API Hashing. Non importa o chiama le funzioni di sistema (come VirtualAlloc o ReadFile) in chiaro. Al contrario, risolve i loro indirizzi in memoria confrontando gli hash e li salva all'interno di una tabella di Puntatori a Funzione nascosta nella sezione .rdata (dati in sola lettura).
+
+
+
+
+🎯 Next Step: La Caccia all'Algoritmo di Decrittazione (Analisi Statica Avanzata)
+Obiettivo Attuale:
+Superata la barriera dell'API Hashing, sappiamo che la backdoor Chrysalis compila la sua "rubrica" di funzioni nascoste tramite una specifica routine (rinominata in Setup_API_Table). Il vero motore di decrittazione del payload si trova inevitabilmente a valle di questa inizializzazione. Dobbiamo individuare il punto esatto in cui il malware apre fisicamente il file dormiente per tradurre il suo codice.  Azioni Operative in IDA Freeware 8.2:  Ispezione delle Stringhe (Il Cecchino):Aprire la finestra delle stringhe (Shift + F12).Ricercare la stringa corrispondente al nome del file contenente il payload crittato: BluetoothService.  Riferimenti Incrociati (Cross-References):Fare doppio clic sulla stringa individuata.Selezionarla e premere il tasto X per visualizzare tutte le funzioni che vi accedono.Questo teletrasporterà la visuale esattamente nel punto in cui il malware prepara i parametri per l'apertura del file.Individuazione del Cuore Matematico:Analizzare il codice Assembly immediatamente successivo al caricamento della stringa.Cercare chiamate indirette (call dword ptr [...]) che indicano l'uso dell'API ReadFile mascherata.Individuare il ciclo iterativo (while/for a livello Assembly, riconoscibile dai salti condizionati come jb o jnz verso l'alto) contenente le istruzioni XOR, ADD o IMUL. Quello sarà l'effettivo algoritmo LCG di decrittazione.
