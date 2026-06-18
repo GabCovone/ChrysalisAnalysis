@@ -246,8 +246,60 @@ Risultato: Individuazione di un denso blocco matematico all'interno della sequen
 Conclusione: Il malware protegge le proprie intenzioni tramite API Hashing. Non importa o chiama le funzioni di sistema (come VirtualAlloc o ReadFile) in chiaro. Al contrario, risolve i loro indirizzi in memoria confrontando gli hash e li salva all'interno di una tabella di Puntatori a Funzione nascosta nella sezione .rdata (dati in sola lettura).
 
 
+12. Dodicesimo Tentativo: Tracking Dinamico, Esecuzione dello Shellcode e Decrittazione Finale
 
+Azione: Bypassata la barriera dell'API Hashing, è stato eseguito un tracciamento dinamico manuale in x32dbg ponendo breakpoint mirati sulla chiamata che inizializza la decrittazione (bp 709D1B62 su call sub_10001640) e sul salto finale dell'esecuzione (bp 709D1C25 su call eax).
 
-🎯 Next Step: La Caccia all'Algoritmo di Decrittazione (Analisi Statica Avanzata)
-Obiettivo Attuale:
-Superata la barriera dell'API Hashing, sappiamo che la backdoor Chrysalis compila la sua "rubrica" di funzioni nascoste tramite una specifica routine (rinominata in Setup_API_Table). Il vero motore di decrittazione del payload si trova inevitabilmente a valle di questa inizializzazione. Dobbiamo individuare il punto esatto in cui il malware apre fisicamente il file dormiente per tradurre il suo codice.  Azioni Operative in IDA Freeware 8.2:  Ispezione delle Stringhe (Il Cecchino):Aprire la finestra delle stringhe (Shift + F12).Ricercare la stringa corrispondente al nome del file contenente il payload crittato: BluetoothService.  Riferimenti Incrociati (Cross-References):Fare doppio clic sulla stringa individuata.Selezionarla e premere il tasto X per visualizzare tutte le funzioni che vi accedono.Questo teletrasporterà la visuale esattamente nel punto in cui il malware prepara i parametri per l'apertura del file.Individuazione del Cuore Matematico:Analizzare il codice Assembly immediatamente successivo al caricamento della stringa.Cercare chiamate indirette (call dword ptr [...]) che indicano l'uso dell'API ReadFile mascherata.Individuare il ciclo iterativo (while/for a livello Assembly, riconoscibile dai salti condizionati come jb o jnz verso l'alto) contenente le istruzioni XOR, ADD o IMUL. Quello sarà l'effettivo algoritmo LCG di decrittazione.
+Risultato: Successo totale. Il debugger si è fermato sull'istruzione call eax, confermando che il malware sta trasferendo il controllo da log.dll al payload caricato in RAM. È stato effettuato un dump della regione di memoria target, ottenendo il file bluetoothservice2.bin (196 KB) e lo shellcode.txt.
+
+Analisi dello Shellcode: L'analisi del dump ha rivelato che non si tratta ancora dell'eseguibile finale, ma di un Unpacking Stub (un guscio preparatorio) strutturato in due parti:
+
+Da 053C401F a 053C4208: Una routine Assembly in chiaro.
+
+Da 053C601F in poi: Dati apparentemente senza senso compiuto, che rappresentano il modulo PE della backdoor Chrysalis ancora crittato.
+
+13. Scoperta dell'Algoritmo Custom di Lotus Blossom
+L'analisi statica della routine Assembly trovata nello shellcode ha permesso di decodificare il cifrario proprietario utilizzato dall'APT. Lotus Blossom non si affida alle API crittografiche di Windows, ma applica una trasformazione matematica byte per byte al blocco di dati a partire da 053C601F, utilizzando una chiave fissa di 8 byte.
+
+Chiave Hardcodata: gQ23R89;
+
+Sequenza Operativa (per ogni byte 'x' ed elemento della chiave 'k'):
+
+x = x + k (Addizione)
+
+x = x ^ k (XOR)
+
+x = x - k (Sottrazione)
+
+🔓 Fase 3: Estrazione Definitiva del Modulo Principale (Chrysalis Backdoor)
+Obiettivo: Decrittare offline il payload, confermarne la validità strutturale e mappare le capacità offensive (C2, persistenza, spionaggio) tramite reverse engineering, eludendo i controlli dinamici.
+
+1. Estrazione Statica Offline (Python Scripting)
+Per evitare di innescare ulteriori difese anti-debugging in fase di esecuzione, il payload è stato spacchettato staticamente replicando la logica del malware:
+
+Calcolo Offset: È stata isolata la porzione di file crittata a partire dall'indirizzo 053C601F (offset esatto in cui terminava lo stub in chiaro e iniziava il payload offuscato).
+
+Emulazione Algoritmo: È stato sviluppato uno script Python custom per emulare in sequenza le operazioni Assembly decodificate (ADD, XOR, SUB), applicandole byte-per-byte utilizzando la chiave hardcodata gQ2JR&9;.
+
+Generazione Payload: L'output è stato salvato come payload_ghidra.bin (il vero eseguibile PE decrittato).
+
+2. Verifica Strutturale (Ghidra)
+Il binario crudo generato è stato importato in Ghidra impostando l'architettura su x86 | 32-bit | little-endian e il Compiler su Visual Studio.
+
+Conferma Unpacking: Il disassemblaggio ha svelato la presenza di un Prologo PE valido in chiaro (MOV EBP, ESP seguito da SUB ESP, 0x4C) e l'istruzione di firma ADD AL, 0x55 al corretto offset. Questo ha validato al 100% il successo dell'algoritmo di decrittazione in Python.
+
+3. Mappatura delle Capacità di Spionaggio (Defined Strings)
+L'analisi statica della memoria (estrazione stringhe) ha rivelato informazioni cruciali sull'architettura e sulle finalità della backdoor:
+
+Architettura C2 (CWininetHttp): Il ritrovamento di mangled names RTTI (Run-Time Type Information) come .?AVCWininetHttp@@ ha confermato che il malware è scritto in C++ Object-Oriented. La backdoor incapsula le API standard di Windows (WinINet) in classi custom per mascherare e gestire la comunicazione HTTP/HTTPS verso i server di comando (C2).
+
+Moduli di Intercettazione (MinWin/User32): L'individuazione di librerie e API Sets virtuali come user32, api-ms-win-rtcore-ntuser-window-l1-1-0 ed ext-ms-win-ntuser-dialogbox-l1-1-0 svela le capacità di intercettazione fisica. Essendo una backdoor silente, il caricamento forzato di librerie per la gestione di finestre e input utente indica chiaramente la presenza di moduli per Keylogging, Lettura della Clipboard o Window Injection.
+
+4. L'Ostacolo Finale: API Hashing e Risoluzione Dinamica
+La ricerca di Indicatori di Compromissione (IoC) diretti, come indirizzi IP, domini in chiaro o chiamate critiche (es. GetProcAddress e LoadLibraryA), ha prodotto esito negativo, svelando un secondo e più sofisticato strato di offuscamento.
+
+Dynamic API Resolution: L'APT Lotus Blossom non salva stringhe di rete sensibili o nomi di API critiche all'interno del file, rendendo inutili le scansioni YARA basate su firme testuali.
+
+API Hashing: Il malware risolve le sue dipendenze "al volo" in memoria. Navigando la RAM, calcola l'hash delle funzioni del sistema operativo e lo confronta con costanti matematiche pre-inserite nel suo codice (es. 0x811C9DC5). Le stringhe necessarie vengono generate, utilizzate per una frazione di secondo e poi distrutte, rendendo il malware classificabile come minaccia avanzata ad altissima furtività.
+
+Conclusione Operativa: L'analisi ha isolato e decifrato con successo le routine di iniezione (DLL Sideloading) e l'algoritmo di decrittazione proprietario dell'attore malevolo, confermando l'attribuzione a Lotus Blossom e fornendo una mappatura completa dell'architettura evasiva della backdoor Chrysalis.
