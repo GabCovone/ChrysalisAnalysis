@@ -1,0 +1,23 @@
+\babel@toc {italian}{}\relax 
+\babel@toc {italian}{}\relax 
+\thispagestyle {empty}
+\contentsline {chapter}{\numberline {1}Analisi Malware Chrysalis}{1}{chapter.1}%
+\contentsline {section}{\numberline {1.1}Descrizione}{1}{section.1.1}%
+\contentsline {subsection}{\numberline {1.1.1}Chrysalis}{2}{subsection.1.1.1}%
+\contentsline {section}{\numberline {1.2}Analisi}{2}{section.1.2}%
+\contentsline {subsection}{\numberline {1.2.1}Tool Utilizzati}{2}{subsection.1.2.1}%
+\contentsline {section}{\numberline {1.3}Esecuzione del malware e Indicatori di Compromissione (IoC)}{3}{section.1.3}%
+\contentsline {subsection}{\numberline {1.3.1}File creati nell'host}{3}{subsection.1.3.1}%
+\contentsline {subsection}{\numberline {1.3.2}Connessioni all'esterno e Traffico C2}{7}{subsection.1.3.2}%
+\contentsline {subsubsection}{Monitoraggio processo per esfiltrazione dei dati}{8}{lstnumber.-1.4}%
+\contentsline {subsubsection}{Persistenza e Chiavi di Registro}{9}{figure.1.9}%
+\contentsline {subsubsection}{Evasione, Monitoraggio e Chiusura}{12}{figure.1.12}%
+\contentsline {section}{\numberline {1.4}Roadmap di Analisi Operativa}{14}{section.1.4}%
+\contentsline {subsection}{\numberline {1.4.1}Analisi di Dettaglio dei Componenti e Ingegneria Inversa}{16}{subsection.1.4.1}%
+\contentsline {subsubsection}{update.exe (Dropper NSIS)}{16}{subsection.1.4.1}%
+\contentsline {subsubsection}{BluetoothService.exe (Loader \& Esca Sideloading)}{17}{Item.7}%
+\contentsline {subsubsection}{log.dll (Loader Intermedio e API Hashing)}{17}{Item.7}%
+\contentsline {subsection}{\numberline {1.4.2}Estrazione e Analisi Dinamica dello Shellcode}{19}{subsection.1.4.2}%
+\contentsline {subsection}{\numberline {1.4.3}Architettura del Modulo Principale (Chrysalis Backdoor)}{26}{subsection.1.4.3}%
+\contentsline {subsubsection}{Decrittazione della Configurazione e Destinazione C2}{27}{figure.1.27}%
+\contentsline {subsubsection}{Tripla Modalità di Esecuzione}{28}{figure.1.30}%
