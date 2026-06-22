@@ -250,184 +250,74 @@ I campioni malevoli estratti dall'archivio (password: `infected`) si presentano 
 #### ⚡ 4. Assemblaggio della Catena
 Spostare i tre file ripristinati (`BluetoothService.exe`, `log.dll` e `BluetoothService`) all'interno della directory creata al punto 2 (`%appdata%\Bluetooth\`). La catena di sideloading è ora pronta per l'esecuzione controllata.
 
-
-### Fase 2: Analisi Dinamica e Bypass Anti-Debugging (In corso)
-🎯 Obiettivo della Fase
-Intercettare il processo di spacchettamento (unpacking) del payload dannoso in memoria, analizzando il comportamento della DLL infetta (log.dll) caricata tramite tecnica di DLL Sideloading dall'eseguibile esca (bluetoothservice.exe).
-
-
-📝 Diario di Analisi e Ostacoli Incontrati
-1. Primo Tentativo: Software Breakpoints sulle API Standard
-Azione: Piazzati Software Breakpoint (SetBPX) sulle principali funzioni di iniezione di Windows (VirtualAlloc, VirtualProtect, CreateProcessInternalW, ecc.) all'Entry Point del programma.
-
-Risultato: Fallimento. Il debugger ha segnalato Terminated prima di raggiungere le funzioni monitorate.
-
-Analisi Procmon: Escludendo il rumore del Registro di Sistema, l'analisi ha rivelato che l'eseguibile ha caricato correttamente log.dll ma si è poi chiuso improvvisamente. Successivamente, è emerso un rapido cambio di PID, con la comparsa di cloni del processo principale e conseguenti errori di SHARING VIOLATION.
-
-Conclusione: Il malware ha rilevato la presenza del debugger (o la modifica della RAM dovuta ai byte 0xCC dei breakpoint software) e ha eseguito una tecnica di evasione clonando se stesso in background (Bait and Switch/Process Spawning).
-
-2. Secondo Tentativo: Potenziamento ScyllaHide
-Azione: Ripristino dello snapshot della VM. Configurazione del profilo ScyllaHide su VMProtect x86/x64 aggiungendo spunte mirate:
-
-Timing Hooks: (GetTickCount, NtQueryPerf.Counter) per impedire al malware di misurare il tempo di esecuzione.
-
-DRx Protection: Per nascondere la presenza di breakpoint hardware alla CPU.
-
-Hide from PEB / System Info: Per rendere invisibile x32dbg alla lista dei processi attivi.
-
-Risultato: Fallimento. Il debugger si è arrestato nuovamente senza far scattare le trappole.
-
-3. Terzo Tentativo: Breakpoint Hardware (HWBP) sulle API Native
-Azione: Sostituzione dei Software Breakpoint (visibili nella RAM) con Hardware Breakpoint (bph), invisibili al malware in quanto salvati direttamente nei registri della CPU (limite massimo di 4 slot).
-
-Target Spostato a livello Kernel: Sono state monitorate le API non documentate (Native) di Windows per intercettare le chiamate di livello più basso:
-
-NtAllocateVirtualMemory
-
-NtWriteVirtualMemory
-
-NtResumeThread
-
-CreateProcessInternalW
-
-Risultato: Il debugger ha correttamente intercettato NtAllocateVirtualMemory durante le fasi iniziali di caricamento di Windows (creazione dell'Heap tramite RtlCreateHeap), ma il malware è sfuggito nuovamente creando un processo clone (es. PID 240) bypassando l'Entry Point dell'eseguibile.
-
-4. La Rivelazione Architetturale: Esecuzione in DllMain
-Azione: Analisi del flusso di caricamento.
-
-Conclusione Fondamentale: Il malware non attende l'Entry Point ufficiale (OptionalHeader.AddressOfEntryPoint) dell'eseguibile per avviare il suo codice. Sfruttando la logica di Windows, il codice malevolo viene eseguito all'interno della funzione di inizializzazione della libreria stessa (DllMain) nel millisecondo esatto in cui il sistema operativo carica log.dll in memoria.
-
-Stato Attuale: Arrivando all'Entry Point, il debugger giunge in ritardo sulla "scena del crimine", quando il processo di iniezione è già avvenuto e il malware ha già spostato l'esecuzione nel nuovo PID.
-
-Per neutralizzare questa strategia di evasione, è necessario spostare la linea di difesa prima dell'Entry Point.
-
-Attivare l'opzione User DLL Entry nelle preferenze (Events) di x32dbg.
-
-Eseguire il programma un modulo alla volta (F9 progressivo).
-
-Congelare l'esecuzione nell'istante esatto in cui il debugger notifica il caricamento del modulo log.dll, prima che venga eseguita la sua DllMain.
-
-5. Quinto Tentativo: Congelamento in DllMain e Mascheramento Avanzato
-
-Azione: Disattivazione dei breakpoint software. Attivazione dell'opzione User DLL Entry in x32dbg per intercettare il caricamento pre-Entry Point. Utilizzo simultaneo di ScyllaHide con spunte mirate su Timing Hooks (per falsificare l'orologio di sistema e ingannare l'istruzione RDTSC) e DRx Protection (per nascondere i Breakpoint Hardware).
-
-Risultato: Fallimento "a scoppio ritardato". Il malware evade sistematicamente al secondo tentativo di esecuzione.
-
-Conclusione: Il malware implementa un controllo di persistenza o verifica lo stato ambientale/PEB (BeingDebugged). Rileva i residui della sessione precedente, rendendo necessario operare in Clean State continuo (tramite ripristino snapshot VM) ed escludendo l'uso di breakpoint temporali che alterano il normale flusso di caricamento.
-
-6. Sesto Tentativo: Intercettazione API Crittografiche Native (Il pensiero laterale)
-
-Azione: Tentativo di bypassare la logica anti-debug estraendo il payload a valle della decrittazione. 
-Ispezione della scheda Simboli di x32dbg per individuare le librerie crittografiche caricate. 
-Posizionamento di Breakpoint Hardware in Esecuzione (HWBP) sulle API native di decrittazione: CryptDecrypt (advapi32.dll) e BCryptDecrypt (bcrypt.dll).  
-Risultato: Evasione completa. 
-I breakpoint sulle API crittografiche non sono mai scattati.  
-Conclusione Fondamentale: L'autore del malware non si affida alle librerie crittografiche di Windows (CryptoAPI/CNG).
-log.dll integra un algoritmo di decrittazione custom (es. XOR, RC4) compilato staticamente nel proprio codice.  
-
-7. Settimo Tentativo: Memory Allocation Trap (La "Tela Vuota")  
-Obiettivo: Dato che il metodo di decrittazione è sconosciuto, intercettare la destinazione finale del payload decrittato.
-
-Azione:
-
-Ripristino in Clean State.
-
-Piazzamento HWBP su NtAllocateVirtualMemory (Ring 0).
-
-Utilizzo dello stepping Execute till Return (Ctrl+F9) per far completare la richiesta di memoria al sistema operativo.
-
-Analisi dello Stack: poiché l'API è nativa, l'indirizzo della memoria allocata non viene restituito in EAX (che contiene solo lo STATUS_SUCCESS), ma tramite un puntatore letto nel parametro [esp+8].
-
-Filtraggio del Rumore: L'analisi del Call Stack ha evidenziato la necessità di filtrare le normali allocazioni di sistema. Molte interruzioni iniziali su NtAllocateVirtualMemory ritornavano a ntdll.RtlCreateHeap (il sistema operativo che prepara l'Heap). La procedura richiede di ignorare queste chiamate legittime eseguendo cicli continui, fermandosi solo quando il return address nello Stack punterà direttamente a log.dll o a un modulo sconosciuto.
-
-8. Ottavo Tentativo: La Trappola su ZwProtectVirtualMemory e Scansione Progressiva
-
-Azione: Abbandonata l'allocazione di memoria a causa dell'eccessivo "rumore" di sistema. Posizionato un Hardware Breakpoint su ZwProtectVirtualMemory (usata dai packer per rendere eseguibile la memoria appena scritta). Ad ogni hit del breakpoint (F9), è stata eseguita una Ricerca Globale (Pattern Search) nella RAM per l'intestazione esadecimale PE: 4D 5A 90 00 03 00 00 00.
-
-Risultato: Successo parziale. Dopo svariati cicli, la scansione ha individuato un nuovo blocco dinamico (es. 006C0000) contenente i Magic Bytes e la dicitura This program cannot be run in DOS mode. Il blocco è stato estratto tramite "Dump Memory to File".
-
-9. Nono Tentativo: Riparazione in PE-bear e la Falsa Pista (Decoy PE)
-
-Azione: Il file binario estratto dalla RAM non veniva riconosciuto da IDA Free a causa del disallineamento della memoria (Virtual vs Raw). Il file è stato caricato in PE-bear per correggere chirurgicamente i Section Headers, sovrascrivendo i campi Raw Addr e Raw size con i valori corrispondenti alle colonne Virtual Addr e Virtual Size.
-
-Risultato: IDA ha riconosciuto l'eseguibile riparato, ma il disassemblaggio forzato (tasto 'C') e l'ispezione delle stringhe (Shift+F12) hanno svelato un inganno. La sezione .text conteneva solo 176 byte. Non c'era traccia di codice Assembly eseguibile, ma esclusivamente informazioni sui metadati (es. ProductVersion, en-US).
-
-Conclusione: Il malware ha ingannato l'analista iniettando una "DLL fantasma" o un mini-eseguibile esca per simulare un avvenuto unpacking. Il payload vero e proprio, di dimensioni nettamente superiori, è ancora celato all'interno del processo originale.
-
-Next Step (In corso): Ripristinare la Macchina Virtuale, lanciare nuovamente la trappola su ZwProtectVirtualMemory in x32dbg e analizzare la Memory Map filtrata per Dimensione (Size) per individuare grandi blocchi (es. 200+ KB) allocati dinamicamente (PRV/MAP) con permessi ERW/RW, isolando così il vero payload.
-
-
-10. Decimo Tentativo: Frammentazione della Memoria (Memory Spraying) e Fallimento HWBP in Scrittura
-Azione: A seguito della scoperta del falso payload, si è tentato di monitorare in tempo reale i blocchi di memoria allocati dinamicamente (con permessi ERW) utilizzando la Memory Map di x32dbg. 
-È stato piazzato un Breakpoint Hardware in Accesso/Scrittura su un blocco candidato per intercettare l'istante esatto della decrittazione.  
-Risultato: Evasione. Il malware genera un "rumore" ambientale estremo attraverso una tecnica di Memory Spraying, allocando decine di piccoli frammenti (es. 4 KB) per disorientare l'analista. 
-Inoltre, sfrutta una decrittazione in-place, sovrascrivendo e rilasciando continuamente i buffer, non lasciando tracce contigue nella RAM.Conclusione: L'architettura di Chrysalis (attribuita all'APT Lotus Blossom) rende l'analisi dinamica in memoria strutturalmente inefficace e incline a falsi positivi.  
-
-11. Undicesimo Tentativo: Analisi Statica su log.dll e Scoperta dell'API Hashing
-Azione: Abbandono del debugging dinamico in favore dell'analisi statica della libreria iniettrice log.dll tramite IDA Freeware 8.2. 
-Ricerca delle routine di base responsabili del caricamento.  
-Risultato: Individuazione di un denso blocco matematico all'interno della sequenza di innesco, inizialmente scambiato per l'algoritmo di decrittazione (LCG). L'analisi delle costanti esadecimali (811C9DC5h e 85EBCA6Bh) ha rivelato che il malware sta in realtà implementando un sofisticato sistema combinato di hashing (FNV-1a e MurmurHash3).
-Conclusione: Il malware protegge le proprie intenzioni tramite API Hashing. Non importa o chiama le funzioni di sistema (come VirtualAlloc o ReadFile) in chiaro. Al contrario, risolve i loro indirizzi in memoria confrontando gli hash e li salva all'interno di una tabella di Puntatori a Funzione nascosta nella sezione .rdata (dati in sola lettura).
-
-
-12. Dodicesimo Tentativo: Tracking Dinamico, Esecuzione dello Shellcode e Decrittazione Finale
-
-Azione: Bypassata la barriera dell'API Hashing, è stato eseguito un tracciamento dinamico manuale in x32dbg ponendo breakpoint mirati sulla chiamata che inizializza la decrittazione (bp 709D1B62 su call sub_10001640) e sul salto finale dell'esecuzione (bp 709D1C25 su call eax).
-
-Risultato: Successo totale. Il debugger si è fermato sull'istruzione call eax, confermando che il malware sta trasferendo il controllo da log.dll al payload caricato in RAM. È stato effettuato un dump della regione di memoria target, ottenendo il file bluetoothservice2.bin (196 KB) e lo shellcode.txt.
-
-Analisi dello Shellcode: L'analisi del dump ha rivelato che non si tratta ancora dell'eseguibile finale, ma di un Unpacking Stub (un guscio preparatorio) strutturato in due parti:
-
-Da 053C401F a 053C4208: Una routine Assembly in chiaro.
-
-Da 053C601F in poi: Dati apparentemente senza senso compiuto, che rappresentano il modulo PE della backdoor Chrysalis ancora crittato.
-
-13. Scoperta dell'Algoritmo Custom di Lotus Blossom
-L'analisi statica della routine Assembly trovata nello shellcode ha permesso di decodificare il cifrario proprietario utilizzato dall'APT. Lotus Blossom non si affida alle API crittografiche di Windows, ma applica una trasformazione matematica byte per byte al blocco di dati a partire da 053C601F, utilizzando una chiave fissa di 8 byte.
-
-Chiave Hardcodata: gQ23R89;
-
-Sequenza Operativa (per ogni byte 'x' ed elemento della chiave 'k'):
-
-x = x + k (Addizione)
-
-x = x ^ k (XOR)
-
-x = x - k (Sottrazione)
-
-### 🔓 Fase 3: Estrazione Definitiva del Modulo Principale (Chrysalis Backdoor)
-Obiettivo: Decrittare offline il payload, confermarne la validità strutturale e mappare le capacità offensive (C2, persistenza, spionaggio) tramite reverse engineering, eludendo i controlli dinamici.
-
-1. Estrazione Statica Offline (Python Scripting)
-Per evitare di innescare ulteriori difese anti-debugging in fase di esecuzione, il payload è stato spacchettato staticamente replicando la logica del malware:
-
-Calcolo Offset: È stata isolata la porzione di file crittata a partire dall'indirizzo 053C601F (offset esatto in cui terminava lo stub in chiaro e iniziava il payload offuscato).
-
-Emulazione Algoritmo: È stato sviluppato uno script Python custom per emulare in sequenza le operazioni Assembly decodificate (ADD, XOR, SUB), applicandole byte-per-byte utilizzando la chiave hardcodata gQ2JR&9;.
-
-Generazione Payload: L'output è stato salvato come payload_ghidra.bin (il vero eseguibile PE decrittato).
-
-2. Verifica Strutturale (Ghidra)
-Il binario crudo generato è stato importato in Ghidra impostando l'architettura su x86 | 32-bit | little-endian e il Compiler su Visual Studio.
-
-Conferma Unpacking: Il disassemblaggio ha svelato la presenza di un Prologo PE valido in chiaro (MOV EBP, ESP seguito da SUB ESP, 0x4C) e l'istruzione di firma ADD AL, 0x55 al corretto offset. Questo ha validato al 100% il successo dell'algoritmo di decrittazione in Python.
-
-3. Mappatura delle Capacità di Spionaggio (Defined Strings)
-L'analisi statica della memoria (estrazione stringhe) ha rivelato informazioni cruciali sull'architettura e sulle finalità della backdoor:
-
-Architettura C2 (CWininetHttp): Il ritrovamento di mangled names RTTI (Run-Time Type Information) come .?AVCWininetHttp@@ ha confermato che il malware è scritto in C++ Object-Oriented. La backdoor incapsula le API standard di Windows (WinINet) in classi custom per mascherare e gestire la comunicazione HTTP/HTTPS verso i server di comando (C2).
-
-Moduli di Intercettazione (MinWin/User32): L'individuazione di librerie e API Sets virtuali come user32, api-ms-win-rtcore-ntuser-window-l1-1-0 ed ext-ms-win-ntuser-dialogbox-l1-1-0 svela le capacità di intercettazione fisica. Essendo una backdoor silente, il caricamento forzato di librerie per la gestione di finestre e input utente indica chiaramente la presenza di moduli per Keylogging, Lettura della Clipboard o Window Injection.
-
-4. L'Ostacolo Finale: API Hashing e Risoluzione Dinamica
-La ricerca di Indicatori di Compromissione (IoC) diretti, come indirizzi IP, domini in chiaro o chiamate critiche (es. GetProcAddress e LoadLibraryA), ha prodotto esito negativo, svelando un secondo e più sofisticato strato di offuscamento.
-
-Dynamic API Resolution: L'APT Lotus Blossom non salva stringhe di rete sensibili o nomi di API critiche all'interno del file, rendendo inutili le scansioni YARA basate su firme testuali.
-
-API Hashing: Il malware risolve le sue dipendenze "al volo" in memoria. Navigando la RAM, calcola l'hash delle funzioni del sistema operativo e lo confronta con costanti matematiche pre-inserite nel suo codice (es. 0x811C9DC5). Le stringhe necessarie vengono generate, utilizzate per una frazione di secondo e poi distrutte, rendendo il malware classificabile come minaccia avanzata ad altissima furtività.
-
-Conclusione Operativa: L'analisi ha isolato e decifrato con successo le routine di iniezione (DLL Sideloading) e l'algoritmo di decrittazione proprietario dell'attore malevolo, confermando l'attribuzione a Lotus Blossom e fornendo una mappatura completa dell'architettura evasiva della backdoor Chrysalis.
-
-
-
-
+### 🧪 Fase 2: Analisi Dinamica e Bypass Anti-Debugging
+🎯 **Obiettivo della Fase:** Intercettare il processo di spacchettamento (unpacking) del payload dannoso in memoria, analizzando il comportamento della DLL infetta (`log.dll`) caricata tramite tecnica di DLL Sideloading.
+
+#### Sintesi dei Tentativi e degli Ostacoli Incontrati
+L'estrazione del payload ha richiesto il superamento di molteplici tecniche di evasione implementate dall'APT Lotus Blossom. Di seguito i passaggi fondamentali del diario di analisi:
+
+1. **Evasione Iniziale (Bait and Switch):** I primi tentativi di usare Software Breakpoints sulle API standard e ScyllaHide si sono rivelati inefficaci. Il malware, una volta rilevato il debugger, clona se stesso in background ed evade l'analisi terminando il processo principale.
+   
+2. **Esecuzione Precoce in DllMain:** Un'analisi architetturale ha rivelato che il codice malevolo non attende il raggiungimento dell'Entry Point ufficiale dell'eseguibile, ma si innesca direttamente nella `DllMain` appena `log.dll` viene caricata in memoria. È stato quindi necessario riconfigurare x32dbg per intercettare l'esecuzione "User DLL Entry".
+   ![Preferenze x32dbg](img/x32dgb_preferences.jpg)
+   ![ScyllaHide](img/scyllahide_opt.jpg)
+
+3. **Trappole nella Memoria e False Piste (Decoy PE):** Tramite Hardware Breakpoints su API native (come `ZwProtectVirtualMemory`), si è isolato un eseguibile in memoria. La sua ricostruzione (tramite PE-bear per correggere i Section Headers) ha però svelato un Decoy PE (esca), di dimensioni esigue e privo di codice Assembly utile.
+   ![Section Headers](img/section_headers.jpg)
+   ![PE Broken](img/PE.jpg)
+   ![PE Fixed](img/PE_fixed.jpg)
+
+4. **Bypass dell'API Hashing:** L'abbandono temporaneo dell'analisi dinamica a favore di quella statica in IDA ha permesso di scoprire l'utilizzo di API Hashing (FNV-1a modificato). 
+   ![Librerie](img/lib.jpg)
+
+5. **Tracking Dinamico ed Estrazione:** Conoscendo la logica, si sono impostati breakpoint mirati in x32dbg sulle routine di decrittazione, permettendo il dump finale dello shellcode, il quale decritta il file usando una logica XOR custom e la chiave `gQ2JR&9;`.
+   ![Memory Map](img/memory_map.jpg)
+   ![Librerie HTTP Caricate](img/LibCaricate_Http.png)
+
+*(Ulteriori evidenze raccolte durante il tracciamento dinamico)*:
+![Evidenza 1](img/Screenshot%202026-06-20%20014620.png)
+![Evidenza 2](img/Screenshot%202026-06-21%20155516.png)
+![Evidenza 3](img/Screenshot%202026-06-21%20164946.png)
+![Evidenza 4](img/Screenshot%202026-06-21%20165027.png)
+![Evidenza 5](img/Screenshot%202026-06-21%20175625.png)
+![Evidenza 6](img/Screenshot%202026-06-22%20014235.png)
+
+### 🔓 Fase 3: Architettura del Modulo Principale (Chrysalis Backdoor)
+Come documentato in maniera approfondita dalle ricerche di Rapid7 e supportato dai nostri riscontri tecnici, il modulo Chrysalis ormai decrittato rivela le sue vere capacità offensive e furtive.
+
+#### 1. Decrittazione della Configurazione e Destinazione C2
+Il primo step cruciale dell'esecuzione del payload consiste nel decrittare la sua configurazione situata all'offset `0x30808`. L'algoritmo crittografico utilizzato per questo blocco è **RC4**, impiegando la chiave hardcodata `qwhvb^435h&*7`.
+![Estrazione Chiave](img/routine_extract_key.png)
+![Routine RC4 Decrypt](img/routine_decrypt.png)
+![Chiave RC4 Memoria](img/rc4_key.png)
+
+Una volta decifrata la configurazione, il malware svela il dominio del Command and Control (C2):
+- **URL di Esfiltrazione:** `https://api.skycloudcenter.com/a/chat/s/70521ddf-a2ef-4adf-9cf0-6d8e24aaa821`
+  La particolare struttura `/a/chat/s/{GUID}` serve a mimetizzare le connessioni come traffico legittimo verso endpoint API di chat (es. DeepSeek API).
+- **Provenienza del Server:** Il dominio e l'URL si risolvono all'indirizzo IP `61.4.102.97`, localizzato in **Malesia**.
+![API URL](img/api.jpg)
+![IP Address](img/ip.jpg)
+
+#### 2. La Tripla Modalità di Esecuzione
+Chrysalis implementa una logica differenziata a tre vie basata sugli argomenti a riga di comando passati all'eseguibile, con lo scopo di eludere sandbox o controlli statici e instaurare la persistenza in modo silente.
+1. **Modalità Installazione (Nessun parametro):** 
+   Crea un servizio di sistema o una voce di registro in modo da assicurare la persistenza all'avvio dell'host. Questo servizio esegue il malware passandogli specificamente il parametro `-i`. Completata l'installazione, il processo originario termina immediatamente.
+2. **Modalità Launcher (Parametro `-i`):**
+   Genera e lancia in background una nuova istanza di se stesso tramite la funzione di sistema `ShellExecuteA`, iniettandovi il parametro `-k`. In questo modo elude il tree genitore.
+   ![ShellExecute Funzione](img/ShellExecute_func.png)
+   ![ShellExecute Dettaglio](img/ShellExecute.png)
+3. **Modalità Payload (Parametro `-k`):**
+   Questa modalità salta i controlli preliminari e avvia direttamente la logica malevola finale, decodificando e mandando in esecuzione il codice (Shellcode + comunicazione C2).
+
+#### 3. Information Gathering ed Esfiltrazione via HTTP POST
+Prima dell'attività di rete, il malware si assicura il monopolio del sistema:
+- **Creazione Mutex:** Verifica la presenza di un Mutex (es. `Global\Jdhfv_1.0.1`) e in caso contrario lo crea per segnalare la sua singola istanza attiva.
+  ![Stack NameMutex](img/StackNameMutex.png)
+  ![Stack NameMutex2](img/Stack_NameMutex2.png)
+- **Info Stealing:** Raccoglie una fingerprint approfondita dell'host, comprendente i dettagli del Sistema Operativo, l'elenco degli Antivirus, l'orario e il Nome Utente/Computer.
+  ![Info Stealer](img/infoStealer.png)
+  ![Stack Info Stealer](img/StackInfoStealer.png)
+- **Connessione C2 e Terminale Interattivo:** Aggrega i dati raccolti, calcola l'hash FNV-1a come UUID e li cifra nuovamente usando un'altra chiave RC4 (`vAuig34%^325hGV`). Successivamente, instaura un terminale/canale bidirezionale (in stile reverse shell cmd.exe) che trasmette costantemente dati all'indirizzo C2 appena decrittato avvalendosi di richieste in formato **HTTP POST**.
+  ![Web Request Header HTTP POST](img/webrequest_header.png)
+
+Tramite questo canale interattivo su protocollo POST, la backdoor Chrysalis può ricevere ed eseguire autonomamente una suite di 16 diverse istruzioni (upload, download, proxy e spawn di processi), confermandosi uno strumento altamente modulare ed evasivo per il toolkit Lotus Blossom.
